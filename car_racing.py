@@ -27,6 +27,7 @@ except ImportError:
         "pygame is not installed, run `pip install gym[box2d]`"
     )
 
+import time
 
 STATE_W = 96  # less than Atari 160x192
 STATE_H = 96
@@ -562,6 +563,9 @@ class CustomCarRacing(gym.Env, EzPickle):
         if surface != None:
             self.screen.blit(surface, (0, 0))
             pygame.display.flip()
+    
+    def show_graphics(self):
+        pygame.display.flip()
 
     def _render(self, mode: str):
         assert mode in self.metadata["render_modes"]
@@ -613,9 +617,9 @@ class CustomCarRacing(gym.Env, EzPickle):
             pygame.event.pump()
             self.clock.tick(self.metadata["render_fps"])
             assert self.screen is not None
-            self.screen.fill(0)
+            # self.screen.fill(0)
             self.screen.blit(self.surf, (0, 0))
-            pygame.display.flip()
+            # pygame.display.flip()
 
         if mode == "rgb_array":
             return self._create_image_array(self.surf, (VIDEO_W, VIDEO_H))
