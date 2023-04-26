@@ -270,15 +270,27 @@ class CustomCarRacing(gym.Env, EzPickle):
             idx = self.np_random.integers(3)
             self.grass_color[idx] += 20
 
+    # def _create_track(self, noise_per_checkpoint = None, rad_per_checkpoint = None):
+    #     CHECKPOINTS = 12
+    #     assert noise_per_checkpoint == None or len(noise_per_checkpoint) == CHECKPOINTS
+    #     assert rad_per_checkpoint == None or len(rad_per_checkpoint) == CHECKPOINTS
+    #     # Create checkpoints
+    #     checkpoints = []
+    #     if noise_per_checkpoint == None:
+    #         noise_per_checkpoint = [self.np_random.uniform(0, 2 * math.pi * 1 / CHECKPOINTS)]
+    #     if rad_per_checkpoint == None:
+    #         rad_per_checkpoint = self.np_random.uniform(TRACK_RAD / 3, TRACK_RAD)
+    #     for c, noise, rad in zip(range(CHECKPOINTS), noise_per_checkpoint, rad_per_checkpoint):
+    #         alpha = 2 * math.pi * c / CHECKPOINTS + noise
     def _create_track(self):
         CHECKPOINTS = 12
 
         # Create checkpoints
         checkpoints = []
         for c in range(CHECKPOINTS):
-            noise = self.np_random.uniform(0, 2 * math.pi * 1 / CHECKPOINTS)
+            noise = self.np_random.uniform(0, 2 * math.pi * 1 / CHECKPOINTS) # TODO Change these to edit track & make non random
             alpha = 2 * math.pi * c / CHECKPOINTS + noise
-            rad = self.np_random.uniform(TRACK_RAD / 3, TRACK_RAD)
+            rad = self.np_random.uniform(TRACK_RAD / 3, TRACK_RAD) # TODO Change these to edit track & make non random
 
             if c == 0:
                 alpha = 0
@@ -562,7 +574,7 @@ class CustomCarRacing(gym.Env, EzPickle):
     def draw_surface(self, surface):
         if surface != None:
             self.screen.blit(surface, (0, 0))
-            pygame.display.flip()
+            # pygame.display.flip()
     
     def show_graphics(self):
         pygame.display.flip()

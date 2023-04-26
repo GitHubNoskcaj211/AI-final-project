@@ -72,7 +72,7 @@ def get_state_pose_surface(pose, color=(255, 255, 255, 125)):
 def compute_road_grid(screen):
     valid_road_pixels = np.full((screen.shape[0], screen.shape[1]), False, dtype=np.bool_)
     valid_road_pixels[np.all(screen >= MINIMUM_ROAD_COLOR, axis=2) & np.all(screen <= MAXIMUM_ROAD_COLOR, axis=2)] = True
-    valid_road_pixels[START_CAR_INDEX_II:END_CAR_INDEX_II, START_CAR_INDEX_JJ:END_CAR_INDEX_JJ] = True
+    # valid_road_pixels[START_CAR_INDEX_II:END_CAR_INDEX_II, START_CAR_INDEX_JJ:END_CAR_INDEX_JJ] = True
     return valid_road_pixels
 
 def compute_speed(hull):
@@ -84,19 +84,32 @@ def compute_angular_velocity(hull):
 def compute_wheel_angle(car):
     return car.wheels[0].joint.angle
 
-# def compute_target_pixel(road):
-#     mean_road = np.mean(np.where(road == True), axis=1)
-#     return mean_road
+def compute_road_middle(road):
+    occupancy_car_position = transform_position(OCCUPANCY_FROM_STATE, np.array([0, 0]))
+    road_segment = road[int(occupancy_car_position[0]),:]
+    road_segment_position = np.where(road_segment == True)
+    if road_segment_position[0].shape[0] == 0:
+        return (71, 47)
+    return np.array([occupancy_car_position[0], np.mean(road_segment_position)])
 
-def compute_target_pixel(road):
+def compute_road_mean(road):
+    road_positions = np.where(road == True)
+    if road_positions[0].shape[0] == 0:
+        return (50, 47)
+    mean_road = np.mean(road_positions, axis=1)
+    return mean_road
+
+def compute_target_pixel_far(road):
     occupancy_car_position = transform_position(OCCUPANCY_FROM_STATE, np.array([0, 0]))
     road_positions = np.transpose(np.where(road == True))
     differences = road_positions - occupancy_car_position
-    distances = differences[0] ** 2 + differences[1] ** 2
-    farthest_road_index = np.argmax(distances)
-    if distances[farthest_road_index] < 70:
+    distances = differences[:,0] ** 2 + differences[:,1] ** 2
+    if distances.shape[0] == 0:
         return (50, 2) # Goal to the left when can't find road
-    farthest_road_position = road_positions[farthest_road_index]
+    farthest_road_indices = np.argsort(distances)[-min(50, distances.shape[0]):]
+    if distances[farthest_road_indices[0]] < 70:
+        return (50, 2) # Goal to the left when can't find road
+    farthest_road_position = np.mean(road_positions[farthest_road_indices,:], axis=0)
     return farthest_road_position
 
 class Perception:
@@ -112,7 +125,9 @@ class Perception:
         self.car_angular_velocity = compute_angular_velocity(car.hull)
         self.car_wheel_angle = compute_wheel_angle(car)
         self.car_speed = compute_speed(car.hull)
-        self.target_pixel = compute_target_pixel(self.road)
+        self.target_pixel_far = compute_target_pixel_far(self.road)
+        self.road_mean = compute_road_mean(self.road)
+        self.road_middle = compute_road_middle(self.road)
 
 def generate_random_control_sequence(sequence_length):
     return np.hstack((np.random.rand(sequence_length, 1) * 2 - 1, np.random.rand(sequence_length, 1), np.random.rand(sequence_length, 1)))
@@ -234,31 +249,37 @@ class MPCController(BaseController):
         return min_distances
 
     def system_cost(self, states, u):
-        summed_distance_from_start = np.sum(np.power(np.sum(np.power(states[:, 0:2], 2), axis=1), 0.5))
-        poor_progress_cost = 1 / (summed_distance_from_start + 1)
+        # summed_distance_from_start = np.sum(np.power(np.sum(np.power(states[:, 0:2], 2), axis=1), 0.5))
+        # poor_progress_cost = 1 / (summed_distance_from_start + 1)
         
-        distance_traveled = np.sum(np.power(np.sum(np.power(states[:-1, 0:2] - states[1:, 0:2], 2), axis=1), 0.5))
-        immobile_cost = 1 / (distance_traveled + 1)
+        # distance_traveled = np.sum(np.power(np.sum(np.power(states[:-1, 0:2] - states[1:, 0:2], 2), axis=1), 0.5))
+        # immobile_cost = 1 / (distance_traveled + 1)
+
+        # summed_angular_speed = np.sum(np.abs(states[:, 4]))
+        # unstable_cost = 1 / (summed_angular_speed)
+
+        # summed_distances_from_road = np.sum(self.compute_min_distances_from_road(states))
+        # stay_on_road_cost = summed_distances_from_road
+
+        turning_cost = np.sum(np.abs(u[:,0]))
         
         non_optimal_speed = np.sum(np.power(states[:, 3] - 30, 2))
 
-        summed_angular_speed = np.sum(np.abs(states[:, 4]))
-        unstable_cost = 1 / (summed_angular_speed)
-
-        summed_distances_from_road = np.sum(self.compute_min_distances_from_road(states))
-        stay_on_road_cost = summed_distances_from_road
-
-        actuation_cost = np.sum(np.power(u, 2))
-
-        target_pixel = self.perception.target_pixel
-        target_position = transform_position(STATE_FROM_OCCUPANCY, target_pixel)
-
+        target_position = transform_position(STATE_FROM_OCCUPANCY, self.perception.target_pixel_far)
         summed_distance_from_target = np.sum(np.power(np.sum(np.power(states[:, 0:2] - target_position, 2), axis=1), 0.5))
-        target_cost = summed_distance_from_target
-
+        target_cost_far = summed_distance_from_target
         vector_to_target = target_position - states[:, 0:2]
         angled_towards_target = np.sum(np.power(np.arctan2(vector_to_target[:,1], vector_to_target[:,0]) - states[:,2], 2))
-        return target_cost + non_optimal_speed * 20 + angled_towards_target * 1e6# + stay_on_road_cost + 1e-3 * actuation_cost + immobile_cost + unstable_cost + poor_progress_cost + stay_on_road_cost
+
+        target_position = transform_position(STATE_FROM_OCCUPANCY, self.perception.road_mean)
+        summed_distance_from_target = np.sum(np.power(np.sum(np.power(states[:, 0:2] - target_position, 2), axis=1), 0.5))
+        target_cost_mean = summed_distance_from_target
+
+        target_position = transform_position(STATE_FROM_OCCUPANCY, self.perception.road_middle)
+        summed_distance_from_target = np.sum(np.power(states[:, 0:2] - target_position, 2)[:,1])
+        target_cost3 = summed_distance_from_target
+
+        return target_cost_far * 20 + target_cost_mean * 5 + target_cost3 + angled_towards_target * 2 + non_optimal_speed + turning_cost * 0.05 # + stay_on_road_cost + 1e-3 * actuation_cost + immobile_cost + unstable_cost + poor_progress_cost + stay_on_road_cost
 
     # def get_optimal_data_input_sequence(self):
     #     def optimization_function(u) -> float:
@@ -289,12 +310,10 @@ class MPCController(BaseController):
         return control_input
 
     def get_next_action(self) -> np.ndarray:
-        if self.action_sequence.shape[0] == 0 or self.c >= self.recompute_iterations: # TODO Switch to multithreaded # TODO This relates to the sample_time = this / FPS (50)
+        if self.action_sequence.shape[0] == 0 or self.c >= self.recompute_iterations:
             self.c = 0
             u = self.get_optimal_data_input_sequence()
             self.action_sequence = u
-            # print(self.current_action)
-            # plot_all_states(self.model_system_output(u)[0])
         current_action = self.action_sequence[0]
         self.action_sequence = self.action_sequence[1:]
         self.c += 1
@@ -305,33 +324,33 @@ def main_control_loop(controller, environment, max_games=None, max_iterations=No
     quit = False
     game_counter = 0
     while not quit and (max_games == None or game_counter < max_games):
+        environment.np_random = np.random.default_rng(1)
         environment.reset()
         controller.reset()
-        total_distance = 0
-        # total_reward = 0.0
-        # steps = 0
         # Burn startup frames
         for ii in range(6*10):
             state, reward, terminated, truncated, info = environment.step(NULL_ACTION)
             perception.compute_perception(state)
             environment.show_graphics()
-        
         iteration_counter = 0
         while True and (max_iterations == None or iteration_counter < max_iterations):
             controller.set_perception(perception)
 
             action = controller.get_next_action()
-            # all_states, u = controller.model_system_output(controller.action_sequence)
-            # colors = [(int(255 - ii * 245 / all_states.shape[0]), int(255 - ii * 245 / all_states.shape[0]), 255, 200) for ii in range(all_states.shape[0])]
-            # surfaces = [get_state_pose_surface(all_states[ii][:3], colors[ii]) for ii in range(all_states.shape[0])]
-            # for surface in surfaces:
-            #     environment.draw_surface(surface)
             quit = controller.quit
             restart = controller.restart
             state, reward, terminated, truncated, info = environment.step(action)
             
             # Display target pixel
-            environment.draw_surface(get_state_position_surface(transform_position(STATE_FROM_OCCUPANCY, perception.target_pixel)))
+            if type(controller) == MPCController:
+                all_states, u = controller.model_system_output(controller.action_sequence)
+                colors = [(int(255 - ii * 245 / all_states.shape[0]), int(255 - ii * 245 / all_states.shape[0]), 255, 200) for ii in range(all_states.shape[0])]
+                surfaces = [get_state_pose_surface(all_states[ii][:3], colors[ii]) for ii in range(all_states.shape[0])]
+                for surface in surfaces:
+                    environment.draw_surface(surface)
+            environment.draw_surface(get_state_position_surface(transform_position(STATE_FROM_OCCUPANCY, perception.target_pixel_far)))
+            environment.draw_surface(get_state_position_surface(transform_position(STATE_FROM_OCCUPANCY, perception.road_mean)))
+            environment.draw_surface(get_state_position_surface(transform_position(STATE_FROM_OCCUPANCY, perception.road_middle)))
 
             perception.compute_perception(state)
             # total_distance += perception.car_speed * 1/50   
@@ -342,7 +361,7 @@ def main_control_loop(controller, environment, max_games=None, max_iterations=No
             #     print("\naction " + str([f"{x:+0.2f}" for x in action]))
             #     print(f"step {steps} total_reward {total_reward:+0.2f}")
             # steps += 1
-            # environment.show_graphics()
+            environment.show_graphics()
             if terminated or truncated or restart or quit:
                 break
             iteration_counter += 1
@@ -398,7 +417,12 @@ if __name__ == "__main__":
     render_mode = 'human' if args.render else None
     
     environment = CustomCarRacing(domain_randomize=False, continuous=True, render_mode=render_mode)
-
+    environment.np_random = np.random.default_rng(1)
     main_control_loop(controller, environment)
     # profile_main_control_loop(controller, environment, 1, 100)
     # run_and_visualize_model_single_input(controller, environment, [(0, 1, 0)] * 20 + [(-1, 0, 0)] * 30 + [(1, 0, 0.1)] * 30)#+ [(0, 0, 1)] * 15)
+
+# Training Infrastructure (clean and parameterize MPC model)
+# Testing Infrastructure (clean and parameterize MPC model)
+# Big parameters
+# Parameters on a weighted sum
